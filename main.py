@@ -4,16 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Function to calculate the Sharpe ratio
-def calculate_sharpe_ratio(returns, risk_free_rate=0):
-    excess_returns = returns - risk_free_rate
-    return np.mean(excess_returns) / np.std(excess_returns)
 
-# Function to calculate the Sortino ratio
-def calculate_sortino_ratio(returns, risk_free_rate=0):
-    excess_returns = returns - risk_free_rate
-    downside_returns = excess_returns[excess_returns < 0]
-    return np.mean(excess_returns) / np.std(downside_returns) if np.std(downside_returns) != 0 else np.nan
 
 # Function to calculate drawdown
 def calculate_drawdown(cumulative_returns):
@@ -71,15 +62,6 @@ if uploaded_file is not None:
     fig = px.histogram(monthly_returns, x=monthly_returns, nbins=20, labels={'x': 'Monthly Return'})
     st.plotly_chart(fig)
 
-    # Sharpe Ratio for the entire dataset
-    st.subheader("Sharpe Ratio")
-    sharpe_ratio = calculate_sharpe_ratio(df['Daily Return'])
-    st.write(f"Sharpe Ratio: {sharpe_ratio:.2f}")
-    
-    # Sortino Ratio for the entire dataset
-    st.subheader("Sortino Ratio")
-    sortino_ratio = calculate_sortino_ratio(df['Daily Return'])
-    st.write(f"Sortino Ratio: {sortino_ratio:.2f}")
 
     # Drawdown Period starting August 2024
     st.subheader("Drawdown (Starting August 2024)")
@@ -103,4 +85,4 @@ if uploaded_file is not None:
     st.subheader("Sharpe Ratio for Each Ticker (Based on Monthly Returns)")
     st.write(ticker_sharpe_monthly)
 
-    
+
