@@ -9,7 +9,7 @@ st.set_page_config(page_title="Trading Strategy Dashboard", layout="wide")
 st.title("📈 Trading Strategy Dashboard")
 
 # File uploader
-uploaded_file = st.file_uploader("Upload CSV file", type="csv")
+uploaded_file = "new.csv"
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
