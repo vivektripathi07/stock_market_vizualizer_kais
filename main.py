@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
+from scipy.stats import skew, kurtosis
 
 # Page configuration
 st.set_page_config(page_title="Trading Strategy Dashboard", layout="wide")
 st.title("📈 Trading Strategy Dashboard")
 
 # File uploader
-uploaded_file = "new.csv"
+uploaded_file = st.file_uploader("Upload CSV file", type="csv")
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
@@ -25,78 +25,53 @@ if uploaded_file:
 
     # ==== Cumulative Return ====
     df['Cumulative Return'] = df['Cumulative PNL'] / starting_balance
-    st.subheader("📊 Cumulative Returns")
-    fig = px.line(df, x='Entry time', y='Cumulative Return', title='Cumulative Return Over Time')
-    fig.update_layout(yaxis_title="Return", xaxis_title="Date", hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
 
     # ==== Monthly Returns ====
     monthly_returns = df.groupby(df['Month'].dt.to_period('M'))['PNL'].sum() / starting_balance
     monthly_returns = monthly_returns.to_timestamp()
 
-    st.subheader("📅 Monthly Returns")
-    fig = px.bar(
-        monthly_returns, 
-        x=monthly_returns.index, 
-        y=monthly_returns.values, 
-        labels={'x': 'Month', 'y': 'Return'},
-        title="Monthly Return"
-    )
-    fig.update_layout(xaxis_title="Month", yaxis_title="Return", hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ==== Monthly Return Distribution ====
-    st.subheader("📈 Distribution of Monthly Returns")
-    fig = px.histogram(monthly_returns, nbins=10, histnorm='probability density', title="Histogram of Monthly Returns")
-    fig.update_layout(xaxis_title="Return", yaxis_title="Density", hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
-
     # ==== Daily Number of Trades ====
     daily_trades = df.groupby('Trade Day').size()
-    st.subheader("📆 Daily Number of Trades")
-    fig = px.line(
-        x=daily_trades.index, 
-        y=daily_trades.values, 
-        labels={"x": "Date", "y": "Number of Trades"},
-        title="Number of Trades Per Day"
-    )
-    fig.update_layout(hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
 
     # ==== Drawdown after Aug 2024 ====
     after_aug = df[df['Entry time'] >= '2024-08-01'].copy()
     after_aug['Cumulative Return'] = after_aug['Cumulative PNL'] / starting_balance
     after_aug['Running Max'] = after_aug['Cumulative Return'].cummax()
     after_aug['Drawdown'] = after_aug['Cumulative Return'] - after_aug['Running Max']
-    st.subheader("📉 Drawdown After August 2024")
-    fig = px.line(after_aug, x='Entry time', y='Drawdown', title="Drawdown Post August 2024")
-    fig.update_layout(yaxis_title="Drawdown", xaxis_title="Date", hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
+
+    # Now calculate max drawdown and other metrics that rely on 'Drawdown'
+    max_drawdown = after_aug['Drawdown'].min() * 100  # Convert to percentage
+
+    # Calculate Longest Drawdown Days
+    longest_dd_days = (after_aug[after_aug['Drawdown'] < 0].groupby((after_aug['Drawdown'] >= 0).cumsum()).size().max())
 
     # ==== Average Daily Leverage ====
     avg_leverage = df.groupby('Trade Day')['Leverage'].mean()
-    st.subheader("⚖️ Average Daily Leverage")
-    fig = px.line(x=avg_leverage.index, y=avg_leverage.values, labels={"x": "Date", "y": "Leverage"}, title="Average Daily Leverage")
-    fig.update_layout(hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
 
     # ==== Sharpe & Sortino ====
-    returns_from_net_pct = df['Net profit (%)'] / 100
-    returns_from_net_pct = returns_from_net_pct.dropna()
-    mean_ret = returns_from_net_pct.mean()
-    std_ret = returns_from_net_pct.std()
-    sharpe = mean_ret / std_ret * np.sqrt(252)
-    downside_std = returns_from_net_pct[returns_from_net_pct < 0].std()
-    sortino = (mean_ret / downside_std * np.sqrt(252)) if downside_std != 0 else float('inf')
+    returns = df['Net profit (%)'] / 100
+    returns = returns.dropna()
 
-    st.subheader("📌 Performance Metrics")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Sharpe Ratio", f"{sharpe:.2f}")
-    col2.metric("Sortino Ratio", f"{sortino:.2f}")
-    col3.metric("Mean Return (%)", f"{mean_ret * 100:.2f}")
-    col4.metric("Std Dev Return (%)", f"{std_ret * 100:.2f}")
+    # Mean and standard deviation of returns
+    mean_return = returns.mean()
+    std_return = returns.std()
 
-    # ==== PNL Validation ====
+    # Daily Sharpe Ratio (assuming 252 trading days/year)
+    if std_return != 0:
+        sharpe_ratio = (mean_return / std_return) * np.sqrt(252)
+    else:
+        sharpe_ratio = float('inf')
+
+    # Downside deviation (only negative returns)
+    downside_std = returns[returns < 0].std()
+
+    # Daily Sortino Ratio
+    if downside_std != 0:
+        sortino_ratio = (mean_return / downside_std) * np.sqrt(252)
+    else:
+        sortino_ratio = float('inf')
+
+    # PNL Validation
     initial_portfolio = 100_000
     cumulative_pnl = 0
     results = []
@@ -140,27 +115,133 @@ if uploaded_file:
     results_df = pd.DataFrame(results)
 
     # ==== Daily Portfolio Value ====
-    st.subheader("💰 Portfolio Value Over Time")
-    results_df["Entry Time"] = pd.to_datetime(results_df["Entry Time"])
     daily_pnl = results_df.set_index("Entry Time").resample("D")["Calculated PNL"].sum().reset_index()
     daily_pnl["Cumulative PNL"] = daily_pnl["Calculated PNL"].cumsum()
     daily_pnl["Portfolio Value"] = initial_portfolio + daily_pnl["Cumulative PNL"]
 
-    fig = px.line(daily_pnl, x="Entry Time", y="Portfolio Value", title="Daily Portfolio Value")
-    fig.add_hline(y=initial_portfolio, line_dash="dash", line_color="red",
-                  annotation_text="Initial Capital", annotation_position="bottom right")
-    fig.update_layout(hovermode="x unified", yaxis_tickprefix="$", yaxis_tickformat=",.0f")
-    st.plotly_chart(fig, use_container_width=True)
+    cumulative_return = (df['Cumulative PNL'].iloc[-1]) 
 
-    # ==== Summary ====
-    st.subheader("📋 Summary")
-    st.write(f"**Initial Portfolio:** ${initial_portfolio:,.2f}")
-    st.write(f"**Final Portfolio:** ${portfolio_value:,.2f}")
-    st.write(f"**Total PnL:** ${cumulative_pnl:,.2f} ({cumulative_pnl / initial_portfolio * 100:.2f}%)")
+    # Calculate CAGR
+    cagr = cumulative_return / 100
 
-    # Expandable: Raw PNL Validation Table
-    with st.expander("🔍 PNL Validation Table"):
-        st.dataframe(results_df)
+    # Calculate Volatility (annualized)
+    daily_returns = df['Net profit (%)'] / 100  # Convert to decimal returns
+    volatility = daily_returns.std() * np.sqrt(252) * 100  # Annualize the standard deviation
+
+    # Calculate Calmar Ratio
+    calmar_ratio = cagr / abs(max_drawdown / 100)
+
+    # Calculate Skewness and Kurtosis
+    skewness = skew(daily_returns.dropna())
+    kurtosis_value = kurtosis(daily_returns.dropna())
+
+    # Layout: Wide charts in center, metrics on the right
+    left_col, right_col = st.columns([4, 1])  # adjust ratio as needed
+
+    # ===== LEFT COLUMN =====
+    with left_col:
+        st.subheader("📊 Cumulative Returns")
+        fig = px.line(df, x='Entry time', y='Cumulative Return', title='Cumulative Return Over Time')
+        fig.update_layout(yaxis_title="Return", xaxis_title="Date", hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("📅 Monthly Returns")
+        fig = px.bar(
+            monthly_returns, 
+            x=monthly_returns.index, 
+            y=monthly_returns.values, 
+            labels={'x': 'Month', 'y': 'Return'},
+            title="Monthly Return"
+        )
+        fig.update_layout(xaxis_title="Month", yaxis_title="Return", hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("📈 Distribution of Monthly Returns")
+        fig = px.histogram(monthly_returns, nbins=10, histnorm='probability density', title="Histogram of Monthly Returns")
+        fig.update_layout(xaxis_title="Return", yaxis_title="Density", hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("📆 Daily Number of Trades")
+        fig = px.line(
+            x=daily_trades.index, 
+            y=daily_trades.values, 
+            labels={"x": "Date", "y": "Number of Trades"},
+            title="Number of Trades Per Day"
+        )
+        fig.update_layout(hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("📉 Drawdown After August 2024")
+        fig = px.line(after_aug, x='Entry time', y='Drawdown', title="Drawdown Post August 2024")
+        fig.update_layout(yaxis_title="Drawdown", xaxis_title="Date", hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("⚖️ Average Daily Leverage")
+        fig = px.line(x=avg_leverage.index, y=avg_leverage.values, labels={"x": "Date", "y": "Leverage"}, title="Average Daily Leverage")
+        fig.update_layout(hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("💰 Portfolio Value Over Time")
+        fig = px.line(daily_pnl, x="Entry Time", y="Portfolio Value", title="Daily Portfolio Value")
+        fig.add_hline(y=initial_portfolio, line_dash="dash", line_color="red",
+                      annotation_text="Initial Capital", annotation_position="bottom right")
+        fig.update_layout(hovermode="x unified", yaxis_tickprefix="$", yaxis_tickformat=",.0f")
+        st.plotly_chart(fig, use_container_width=True)
+
+        with st.expander("🔍 PNL Validation Table"):
+            st.dataframe(results_df)
+
+    # ===== RIGHT COLUMN =====
+    with right_col:
+        # CSS to reduce font sizes across all elements
+        st.markdown("""
+        <style>
+        /* Target Subheaders (h3) */
+        h3 {
+            font-size: 16px !important;
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* Target Metric Titles and Values */
+        div[data-testid="stMetricLabel"] > div, 
+        div[data-testid="stMetricValue"] > div {
+            font-size: 14px !important;
+        }
+        
+        /* Target Regular Text (st.write) */
+        .stMarkdown p {
+            font-size: 14px !important;
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* Optional: Reduce space between metrics */
+        div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column"] > div {
+            padding-top: 0px !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # --- Your Original Content ---
+        st.subheader("📌 Performance Metrics")  # Now smaller (h3 target)
+        st.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")  # Title and value shrunk
+        st.metric("Sortino Ratio", f"{sortino_ratio:.2f}")
+        st.metric("Mean Return (%)", f"{mean_return * 100:.2f}")
+        st.metric("Std Dev Return (%)", f"{std_return * 100:.2f}")
+        
+        # New metrics
+        st.metric("Cumulative Return (%)", f"{cumulative_return:.2f}")
+        st.metric("CAGR (%)", f"{cagr:.2f}")
+        st.metric("Max Drawdown (%)", f"{max_drawdown:.2f}")
+        st.metric("Longest DD Days", f"{longest_dd_days}")
+        st.metric("Volatility (ann.)", f"{volatility:.2f}")
+        st.metric("Calmar Ratio", f"{calmar_ratio:.2f}")
+        st.metric("Skew", f"{skewness:.2f}")
+        st.metric("Kurtosis", f"{kurtosis_value:.2f}")
+        
+        st.subheader("📋 Summary")  # Also smaller
+        st.write(f"**Initial Portfolio:** ${initial_portfolio:,.2f}")  # Smaller text
+        st.write(f"**Final Portfolio:** ${portfolio_value:,.2f}")
+        st.write(f"**Total PnL:** ${cumulative_pnl:,.2f} ({cumulative_pnl / initial_portfolio * 100:.2f}%)")
 
 else:
     st.info("Please upload a CSV file to see the dashboard.")
